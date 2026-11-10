@@ -104,6 +104,11 @@ td.sub{max-width:240px}
 .more{padding:10px 16px;border-top:1px solid var(--line);font-size:13px}
 .more button{background:none;border:0;color:var(--accent);font:600 13px var(--f-body);cursor:pointer;padding:0}
 .none{padding:12px 16px;border-top:1px solid var(--line);font-size:13.5px;color:var(--muted)}
+.uso{margin:0 16px 12px;padding:10px 12px;border-radius:8px;background:var(--surface-2);font-size:14px;display:flex;flex-direction:column;gap:4px}
+.uso .label{font-size:11px}
+.uso p{margin:0}
+.uso small{color:var(--muted);font-size:11.5px}
+.uso button{align-self:flex-start;background:none;border:0;padding:0;color:var(--accent);font:600 13px var(--f-body);cursor:pointer}
 footer{margin-top:28px;font-size:12px;color:var(--muted);max-width:75ch}
 [hidden]{display:none!important}
 body{margin:0}
@@ -297,6 +302,15 @@ function verdictHTML(rows){
   const word = top.rxc==="s" ? "Receita obrigatória" : "Venda sem receita";
   return `<div class="verdict ${cls}"><div class="v1">${word}</div><div class="v2">${top.det}${varied?" Varia conforme a apresentação; veja a tabela.":""}${tarjas.length>known.length&&!varied?" Algumas apresentações sem tarja informada.":""}</div></div>`;
 }
+function usoHTML(item, n){
+  let inner;
+  if (item.indicacao) inner = `<p>${esc(item.indicacao)}</p><small>Informação geral gerada pelo Gemini a partir do nome do produto. Não substitui a bula nem a orientação do farmacêutico.</small>`;
+  else if (item.indStatus === "loading") inner = `<p class="src">Buscando…</p>`;
+  else if (item.indStatus === "vazio") inner = `<p class="src">O Gemini não reconheceu este produto com segurança.</p>`;
+  else if (item.indStatus === "erro") inner = `<p class="src">${esc(item.indErro || "Não foi possível buscar agora.")}</p><button data-uso="${n}">Tentar de novo</button>`;
+  else inner = `<button data-uso="${n}">Ver para que serve</button>`;
+  return `<div class="uso"><span class="label">Para que serve</span>${inner}</div>`;
+}
 function cardHTML(item, n){
   const m = item.match;
   const shown = item.showAll ? item.uniq : item.uniq.slice(0,LIMIT);
@@ -316,6 +330,7 @@ function cardHTML(item, n){
       </div>
       ${m?.type ? verdictHTML(item.uniq) : `<div class="verdict ind"><div class="v1">Fora da Lista PMC</div><div class="v2">Sem dados de tarja ou receita na lista.</div></div>`}
     </div>
+    ${usoHTML(item, n)}
     <form class="re-search" data-form="${n}"><input id="q${n}" value="${esc(item.query)}" aria-label="Corrigir nome pesquisado"><button class="btn ghost" type="submit">Buscar de novo</button></form>
     ${body}
   </article>`;
@@ -327,10 +342,10 @@ function dedupRows(rows){
   out.sort((a,b)=> rxOf(D[4][ROWS[b][4]]).rank - rxOf(D[4][ROWS[a][4]]).rank || D[1][ROWS[a][1]].localeCompare(D[1][ROWS[b][1]]));
   return out;
 }
-function makeItem(query, line, ean){
+function makeItem(query, line, ean, indicacao){
   ean = ean === "-" ? "" : (ean || findEAN(line) || findEAN(query));
   const match = lookup(query, ean);
-  return {query, line, ean, match, uniq: match?.rows?.length ? dedupRows(match.rows) : [], showAll:false};
+  return {query, line, ean, match, indicacao: indicacao || "", indStatus: indicacao ? "ok" : "", uniq: match?.rows?.length ? dedupRows(match.rows) : [], showAll:false};
 }
 function render(){
   const box = $("results");
@@ -339,19 +354,58 @@ function render(){
 }
 $("results").addEventListener("click", e => {
   const t = e.target.closest("[data-toggle]"); if (t){ const it=items[+t.dataset.toggle]; it.showAll=!it.showAll; render(); return; }
-  const a = e.target.closest("[data-alt]"); if (a){ const n=+a.dataset.card; items[n] = makeItem(a.dataset.alt, items[n].line, "-"); render(); }
+  const u = e.target.closest("[data-uso]"); if (u){ fetchUso([+u.dataset.uso]); return; }
+  const a = e.target.closest("[data-alt]"); if (a){ const n=+a.dataset.card; items[n] = makeItem(a.dataset.alt, items[n].line, "-"); render(); fetchUso([n]); }
 });
 $("results").addEventListener("submit", e => {
   const f = e.target.closest("[data-form]"); if(!f) return; e.preventDefault();
-  const n=+f.dataset.form; const v=$("q"+n).value.trim(); if(v){ items[n]=makeItem(v, items[n].line, findEAN(v) || "-"); render(); }
+  const n=+f.dataset.form; const v=$("q"+n).value.trim(); if(v){ items[n]=makeItem(v, items[n].line, findEAN(v) || "-"); render(); fetchUso([n]); }
 });
 
 function runText(lines, isExample){
-  items = lines.map(l => typeof l === "string" ? {q:l,line:l} : l).filter(x=>x.q && x.q.trim()).map(x => makeItem(x.q.trim(), x.line, x.ean));
+  items = lines.map(l => typeof l === "string" ? {q:l,line:l} : l).filter(x=>x.q && x.q.trim()).map(x => makeItem(x.q.trim(), x.line, x.ean, x.indicacao));
   $("exTag").hidden = !isExample;
   render();
+  if (!isExample) fetchUso(items.map((_, i) => i));
 }
 $("searchBtn").onclick = () => runText($("text").value.split("\n"), false);
+
+// ---- para que serve (Gemini, só texto)
+const usoCache = new Map();
+function usoKey(it){
+  const m = it.match, r = it.uniq[0] !== undefined ? ROWS[it.uniq[0]] : null;
+  return { nome: m?.type ? m.key : it.query, substancia: r ? D[0][r[0]] : "", classe: r ? D[2][r[2]] : "" };
+}
+async function fetchUso(idxs){
+  const todo = idxs.filter(i => items[i] && !items[i].indicacao && items[i].indStatus !== "loading");
+  const pend = [];
+  for (const i of todo){
+    const k = usoKey(items[i]); const ck = k.nome.toUpperCase();
+    if (usoCache.has(ck)) { items[i].indicacao = usoCache.get(ck); items[i].indStatus = items[i].indicacao ? "ok" : "vazio"; }
+    else { items[i].indStatus = "loading"; pend.push([i, k]); }
+  }
+  render();
+  if (!pend.length) return;
+  const snapshot = pend.map(([i]) => items[i]);
+  try {
+    const r = await fetch("/api/ler-cupom", {
+      method:"POST",
+      headers:{ "content-type":"application/json", "x-codigo-acesso": $("code").value.trim() },
+      body: JSON.stringify({ produtos: pend.map(([, k]) => k) }),
+    });
+    if (r.status === 401) $("codeBox").hidden = false;
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !Array.isArray(data.indicacoes)) throw new Error(r.status === 404 || r.status === 405 ? "A busca precisa da função do Cloudflare publicada." : (data.erro || "Não foi possível buscar agora."));
+    pend.forEach(([i, k], j) => {
+      const txt = String(data.indicacoes[j]?.indicacao || "").trim();
+      usoCache.set(k.nome.toUpperCase(), txt);
+      if (items[i] === snapshot[j]) { items[i].indicacao = txt; items[i].indStatus = txt ? "ok" : "vazio"; }
+    });
+  } catch (e) {
+    pend.forEach(([i], j) => { if (items[i] === snapshot[j]) { items[i].indStatus = "erro"; items[i].indErro = e.message; } });
+  }
+  render();
+}
 
 // ---- imagem
 let imgFile = null, ctl = null;
@@ -402,7 +456,7 @@ async function readWithAI(jpeg, signal){
   if (r.status === 404 || r.status === 405) { const e = new Error("Função não publicada"); e.code = "nofn"; throw e; }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(data.erro || ("Erro " + r.status)); e.code = data.codigo || "api"; throw e; }
-  return (Array.isArray(data.itens) ? data.itens : []).map(o => ({q:String(o?.nome||o?.linha||"").trim(), line:String(o?.linha||"").trim(), ean:String(o?.ean||"").replace(/\D/g,"")})).filter(o=>o.q);
+  return (Array.isArray(data.itens) ? data.itens : []).map(o => ({q:String(o?.nome||o?.linha||"").trim(), line:String(o?.linha||"").trim(), ean:String(o?.ean||"").replace(/\D/g,""), indicacao:String(o?.indicacao||"").trim()})).filter(o=>o.q);
 }
 
 // 2) Alternativa: OCR no navegador com Tesseract.js
