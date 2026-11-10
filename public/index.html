@@ -183,6 +183,8 @@ ROWS.forEach((r,i) => {
   const pk = norm(D[1][r[1]]); if (pk){ (prodIdx.get(pk)||prodIdx.set(pk,[]).get(pk)).push(i); }
   const sk = norm(D[0][r[0]]); if (sk){ (subIdx.get(sk)||subIdx.set(sk,[]).get(sk)).push(i); }
 });
+const EAN = RAW.ean || {};
+const findEAN = t => (String(t||"").match(/(?<!\d)(\d{13}|\d{8})(?!\d)/)||[])[1] || "";
 const keys = [...[...prodIdx.keys()].map(k=>({k,t:"produto"})), ...[...subIdx.keys()].map(k=>({k,t:"substância"}))];
 $("srcInfo").textContent = `Base: Lista PMC · ${prodIdx.size.toLocaleString("pt-BR")} produtos · ${subIdx.size.toLocaleString("pt-BR")} substâncias`;
 
@@ -219,7 +221,12 @@ function lev(a,b){
 }
 const ratio = (a,b) => 1 - lev(a,b)/Math.max(a.length,b.length);
 
-function lookup(query){
+function lookup(query, ean){
+  ean = ean || findEAN(query);
+  if (ean && EAN[ean] !== undefined){
+    const i = EAN[ean];
+    return {type:"código de barras", key:D[1][ROWS[i][1]], rows:[i], exact:true, alts:[], note:`EAN ${ean}`, ean};
+  }
   const toks = cleanTokens(query);
   if (!toks.length) return null;
   // 1) maior sequência inicial com correspondência exata — produto, depois substância
@@ -259,7 +266,13 @@ function lookup(query){
   scored.sort((a,b)=>b.s-a.s || a.k.length-b.k.length);
   const uniq=[]; const seen=new Set();
   for (const c of scored){ if(!seen.has(c.k)){seen.add(c.k);uniq.push(c);} if(uniq.length>=6) break; }
-  if (!uniq.length || uniq[0].s < 0.78) return {type:null, key:q, rows:[], exact:false, alts:uniq.slice(0,5)};
+  if (!uniq.length || uniq[0].s < 0.78){
+    // sugestões pelo primeiro nome (ex.: "ADDERA CAL" -> "ADDERA D3")
+    const first = toks[0];
+    const byFirst = first.length >= 4 ? [...prodIdx.keys()].filter(k => k.split(" ")[0] === first).slice(0,5).map(k=>({k})) : [];
+    const alts = [...byFirst, ...uniq].filter((a,i,arr)=>arr.findIndex(b=>b.k===a.k)===i).slice(0,5);
+    return {type:null, key:q, rows:[], exact:false, alts, ean};
+  }
   const best = uniq[0];
   const idx = best.t === "produto" ? prodIdx : subIdx;
   return {type:best.t, key:best.k, rows:idx.get(best.k), exact:false, alts:uniq.slice(1,5)};
@@ -293,7 +306,7 @@ function cardHTML(item, n){
   const body = m?.type
     ? `<div class="tbl-wrap"><table><thead><tr><th>Substância</th><th>Produto</th><th>Classe terapêutica</th><th>Tipo de produto</th><th>Tarja</th><th>Receita</th></tr></thead><tbody>${shown.map(rowHTML).join("")}</tbody></table></div>
        ${item.uniq.length>LIMIT?`<div class="more">${item.showAll?"":`Mostrando ${LIMIT} de ${item.uniq.length}. `}<button data-toggle="${n}">${item.showAll?"Mostrar menos":"Mostrar todas"}</button></div>`:""}`
-    : `<div class="none">Nenhum produto ou substância da Lista PMC corresponde a “${esc(item.query)}”. Corrija o nome abaixo${alts?" ou escolha uma sugestão":""}.</div>`;
+    : `<div class="none"><b>Não consta na Lista PMC.</b> ${m?.ean?`O código de barras ${esc(m.ean)} não está na lista, e o nome também não foi encontrado. `:""}A Lista PMC só traz medicamentos com preço regulado pela CMED. Suplementos alimentares e vitamínicos registrados como alimento, dermocosméticos, produtos de higiene e correlatos não aparecem nela, e por isso o app não consegue dizer a tarja nem a exigência de receita. Se o nome foi lido errado, corrija abaixo${alts?" ou escolha uma das sugestões":""}.</div>`;
   return `<article class="card">
     <div class="card-top">
       <div style="min-width:0">
@@ -301,7 +314,7 @@ function cardHTML(item, n){
         <div class="med">${esc(m?.type ? m.key : item.query)}</div>
         <div class="chips">${chips}${alts?`<span class="src">Outras opções:</span>${alts}`:""}</div>
       </div>
-      ${m?.type ? verdictHTML(item.uniq) : ""}
+      ${m?.type ? verdictHTML(item.uniq) : `<div class="verdict ind"><div class="v1">Fora da Lista PMC</div><div class="v2">Sem dados de tarja ou receita na lista.</div></div>`}
     </div>
     <form class="re-search" data-form="${n}"><input id="q${n}" value="${esc(item.query)}" aria-label="Corrigir nome pesquisado"><button class="btn ghost" type="submit">Buscar de novo</button></form>
     ${body}
@@ -314,26 +327,27 @@ function dedupRows(rows){
   out.sort((a,b)=> rxOf(D[4][ROWS[b][4]]).rank - rxOf(D[4][ROWS[a][4]]).rank || D[1][ROWS[a][1]].localeCompare(D[1][ROWS[b][1]]));
   return out;
 }
-function makeItem(query, line){
-  const match = lookup(query);
-  return {query, line, match, uniq: match?.rows?.length ? dedupRows(match.rows) : [], showAll:false};
+function makeItem(query, line, ean){
+  ean = ean === "-" ? "" : (ean || findEAN(line) || findEAN(query));
+  const match = lookup(query, ean);
+  return {query, line, ean, match, uniq: match?.rows?.length ? dedupRows(match.rows) : [], showAll:false};
 }
 function render(){
   const box = $("results");
-  if (!items.length){ box.innerHTML = `<div class="empty">Nenhum medicamento identificado. Envie a captura do cupom ou digite os itens à esquerda.</div>`; return; }
+  if (!items.length){ box.innerHTML = `<div class="empty">Nenhum item identificado. Envie a captura do cupom ou digite os itens à esquerda.</div>`; return; }
   box.innerHTML = items.map(cardHTML).join("");
 }
 $("results").addEventListener("click", e => {
   const t = e.target.closest("[data-toggle]"); if (t){ const it=items[+t.dataset.toggle]; it.showAll=!it.showAll; render(); return; }
-  const a = e.target.closest("[data-alt]"); if (a){ const n=+a.dataset.card; items[n] = makeItem(a.dataset.alt, items[n].line); render(); }
+  const a = e.target.closest("[data-alt]"); if (a){ const n=+a.dataset.card; items[n] = makeItem(a.dataset.alt, items[n].line, "-"); render(); }
 });
 $("results").addEventListener("submit", e => {
   const f = e.target.closest("[data-form]"); if(!f) return; e.preventDefault();
-  const n=+f.dataset.form; const v=$("q"+n).value.trim(); if(v){ items[n]=makeItem(v, items[n].line); render(); }
+  const n=+f.dataset.form; const v=$("q"+n).value.trim(); if(v){ items[n]=makeItem(v, items[n].line, findEAN(v) || "-"); render(); }
 });
 
 function runText(lines, isExample){
-  items = lines.map(l => typeof l === "string" ? {q:l,line:l} : l).filter(x=>x.q && x.q.trim()).map(x => makeItem(x.q.trim(), x.line));
+  items = lines.map(l => typeof l === "string" ? {q:l,line:l} : l).filter(x=>x.q && x.q.trim()).map(x => makeItem(x.q.trim(), x.line, x.ean));
   $("exTag").hidden = !isExample;
   render();
 }
@@ -388,7 +402,7 @@ async function readWithAI(jpeg, signal){
   if (r.status === 404 || r.status === 405) { const e = new Error("Função não publicada"); e.code = "nofn"; throw e; }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(data.erro || ("Erro " + r.status)); e.code = data.codigo || "api"; throw e; }
-  return (Array.isArray(data.itens) ? data.itens : []).map(o => ({q:String(o?.nome||o?.linha||"").trim(), line:String(o?.linha||"").trim()})).filter(o=>o.q);
+  return (Array.isArray(data.itens) ? data.itens : []).map(o => ({q:String(o?.nome||o?.linha||"").trim(), line:String(o?.linha||"").trim(), ean:String(o?.ean||"").replace(/\D/g,"")})).filter(o=>o.q);
 }
 
 // 2) Alternativa: OCR no navegador com Tesseract.js
@@ -404,11 +418,16 @@ async function readWithTesseract(jpeg){
   const lines = data.text.split("\n").map(s=>s.trim()).filter(s => /[A-Za-zÀ-ú]{4,}/.test(s));
   const out = [];
   for (const l of lines){
-    const m = lookup(l);
-    if (m?.type) out.push({q: m.key, line: l});
+    const item = l.match(/^\W{0,4}(\d{8,14})\s+(.{3,})$/); // "7896094921139 ADDERA CAL 2.000UI FR CPD/90"
+    const m = lookup(item ? item[2] : l, item ? item[1] : "");
+    if (m?.type) out.push({q: m.type === "código de barras" ? (item ? cleanTokens(item[2]).join(" ") || m.key : m.key) : m.key, line: l, ean: item?.[1]});
+    else if (item) out.push({q: cleanTokens(item[2]).join(" ") || item[2], line: l, ean: item[1]});
   }
+  // Se o cupom tem linhas com código do produto, usa só elas (evita cabeçalhos como "COD | DESC")
+  const coded = out.filter(o => o.ean);
+  const pick = coded.length ? coded : out.filter(o => o.q.length >= 4);
   const seen = new Set();
-  return out.filter(o => !seen.has(o.q) && seen.add(o.q));
+  return pick.filter(o => !seen.has(o.q) && seen.add(o.q));
 }
 
 async function readImage(){
@@ -433,9 +452,9 @@ async function readImage(){
       list = await readWithTesseract(jpeg); via = "leitor offline";
     }
     if (signal.aborted) return;
-    $("text").value = list.map(o=>o.q).join("\n");
+    $("text").value = list.map(o=>(o.ean ? o.ean+" " : "")+o.q).join("\n");
     runText(list, false);
-    setStatus(list.length ? `${list.length} item(ns) lido(s) pelo ${via}. Ajuste os nomes no campo 2 se precisar.` : "Nenhum medicamento encontrado na imagem. Digite os itens no campo 2.", !list.length);
+    setStatus(list.length ? `${list.length} item(ns) lido(s) pelo ${via}. Ajuste os nomes no campo 2 se precisar.` : "Nenhum produto encontrado na imagem. Digite os itens no campo 2.", !list.length);
   } catch(e){
     if (e.name === "AbortError") setStatus("Leitura interrompida.");
     else setStatus(e.message || "Falha na leitura. Tente de novo.", true);

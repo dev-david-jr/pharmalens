@@ -11,14 +11,15 @@ const FALLBACK_MODEL = "gemini-2.5-flash";
 const MAX_BASE64 = 6_500_000; // ~4,8 MB de imagem
 
 const PROMPT = `A imagem é a captura de um cupom fiscal / nota de farmácia (Brasil).
-Liste TODOS os itens que sejam medicamentos. Para cada item informe:
-- "linha": o texto do item exatamente como aparece no cupom;
+Liste TODOS os produtos vendidos no cupom (medicamentos, vitaminas, suplementos e qualquer outro item da lista de produtos). Não inclua linhas de totais, pagamento, cabeçalho ou rodapé.
+Para cada produto informe:
+- "linha": a descrição do item exatamente como aparece no cupom;
+- "ean": o código numérico do item (código de barras com 8 ou 13 dígitos, normalmente antes da descrição), ou "" se não houver;
 - "nome": o nome comercial do produto OU a substância, por extenso e sem abreviações, sem dosagem, forma farmacêutica, quantidade ou laboratório. Expanda abreviações comuns de cupom (ex.: "DIPIR SOD" -> "DIPIRONA SODICA", "AMOXIC" -> "AMOXICILINA", "LOSART POT" -> "LOSARTANA POTASSICA"). Se o item for um genérico, use o nome da substância.
-Ignore itens que claramente não são medicamentos (cosméticos, higiene, alimentos, sacolas).
 Não inclua dados pessoais do cupom (nome, CPF, endereço).
 Responda apenas com um array JSON, por exemplo:
-[{"linha":"NEOSALDINA 30DRG","nome":"NEOSALDINA"},{"linha":"DIPIR SOD 500MG 10CP EMS","nome":"DIPIRONA SODICA"}]
-Se não houver medicamentos legíveis, responda [].`;
+[{"linha":"7896094921139 ADDERA CAL 2.000UI FR CPD/90","ean":"7896094921139","nome":"ADDERA CAL"},{"linha":"DIPIR SOD 500MG 10CP EMS","ean":"","nome":"DIPIRONA SODICA"}]
+Se não houver produtos legíveis, responda [].`;
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -95,7 +96,7 @@ export async function onRequestPost({ request, env }) {
   if (!Array.isArray(itens)) itens = [];
   itens = itens
     .filter(o => o && (o.nome || o.linha))
-    .map(o => ({ linha: String(o.linha || "").slice(0, 200), nome: String(o.nome || o.linha || "").slice(0, 120) }));
+    .map(o => ({ linha: String(o.linha || "").slice(0, 200), nome: String(o.nome || o.linha || "").slice(0, 120), ean: String(o.ean || "").replace(/\D/g, "").slice(0, 14) }));
 
   return json({ itens });
 }
