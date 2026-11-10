@@ -1,10 +1,10 @@
-// Cloudflare Pages Function: POST /api/ler-cupom
-// Dois modos, ambos com a API do Google Gemini (camada gratuita do Google AI Studio):
-//   1) Ler cupom:   { image: <base64>, mediaType: "image/jpeg" }
-//                   -> { itens: [{ linha, ean, nome, indicacao }] }
-//   2) Para que serve: { produtos: [{ nome, substancia?, classe? }] }
-//                   -> { indicacoes: [{ nome, indicacao }] }
-// Variáveis de ambiente (Cloudflare > Pages > Settings > Variables and Secrets):
+// Cloudflare Worker do Leitor de Cupom PMC (PharmaLens)
+// - Serve os arquivos de public/ (página e lista PMC)
+// - POST /api/ler-cupom, em dois modos, com a API do Google Gemini:
+//     1) Ler cupom:      { image: <base64>, mediaType } -> { itens: [{ linha, ean, nome, indicacao }] }
+//     2) Para que serve: { produtos: [{ nome, substancia?, classe? }] } -> { indicacoes: [{ nome, indicacao }] }
+// - GET /api/ler-cupom: verificação (abra no navegador)
+// Variáveis (Workers > pharmalens > Settings > Variables and Secrets):
 //   GEMINI_API_KEY  (obrigatória, tipo Secret) — crie em https://aistudio.google.com/apikey
 //   GEMINI_MODEL    (opcional; padrão "gemini-flash-latest")
 //   ACCESS_CODE     (opcional; se definida, o app pede este código antes de ler)
@@ -81,7 +81,7 @@ async function gemini(env, parts) {
   }
 }
 
-export async function onRequestPost({ request, env }) {
+async function handlePost(request, env) {
   if (!env.GEMINI_API_KEY) {
     return json({ erro: "GEMINI_API_KEY não configurada no Cloudflare.", codigo: "config" }, 500);
   }
@@ -131,3 +131,24 @@ export async function onRequestPost({ request, env }) {
     return json({ erro: "Falha inesperada na função.", codigo: "erro" }, 500);
   }
 }
+
+function handleGet(env) {
+  return json({
+    funcao: "ok",
+    chave_gemini: env.GEMINI_API_KEY ? "configurada" : "FALTANDO (cadastre GEMINI_API_KEY e faça novo deploy)",
+    modelo: env.GEMINI_MODEL || DEFAULT_MODEL,
+    codigo_de_acesso: env.ACCESS_CODE ? "ativado" : "desativado",
+  });
+}
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/ler-cupom" || url.pathname === "/api/ler-cupom/") {
+      if (request.method === "POST") return handlePost(request, env);
+      if (request.method === "GET") return handleGet(env);
+      return json({ erro: "Método não permitido." }, 405);
+    }
+    return env.ASSETS.fetch(request);
+  },
+};
