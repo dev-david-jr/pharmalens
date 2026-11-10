@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Leitor de Cupom PMC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: bancada de farmácia — coluna do cupom à esquerda, fichas de resultado à direita; empilha no celular */
+:root{
+  --bg:#f3f5f4; --surface:#ffffff; --surface-2:#e9eeec; --line:#d3dbd8;
+  --fg:#17211e; --muted:#5b6964; --accent:#0d7a5f; --accent-fg:#ffffff; --accent-soft:#d9efe7;
+  --red:#c62828; --red-soft:#fde4e2; --black:#111111; --black-fg:#ffffff; --free:#2e7d32; --free-soft:#e1f2e2;
+  --warn:#9a6700; --warn-soft:#fbefcf;
+  --paper:#fffef8; --paper-line:#e7e3d3;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#101614; --surface:#18201d; --surface-2:#212b28; --line:#2f3b37;
+  --fg:#e6ece9; --muted:#97a6a0; --accent:#3fbf96; --accent-fg:#06231a; --accent-soft:#16352b;
+  --red:#ff6b61; --red-soft:#3a1a18; --black:#000000; --black-fg:#f2f2f2; --free:#6fcf76; --free-soft:#17301a;
+  --warn:#e8b341; --warn-soft:#352a10; --paper:#1d2421; --paper-line:#2c3531; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#101614; --surface:#18201d; --surface-2:#212b28; --line:#2f3b37;
+  --fg:#e6ece9; --muted:#97a6a0; --accent:#3fbf96; --accent-fg:#06231a; --accent-soft:#16352b;
+  --red:#ff6b61; --red-soft:#3a1a18; --black:#000000; --black-fg:#f2f2f2; --free:#6fcf76; --free-soft:#17301a;
+  --warn:#e8b341; --warn-soft:#352a10; --paper:#1d2421; --paper-line:#2c3531; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5}
+.wrap{max-width:1240px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header.top{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px 24px;padding-bottom:16px;border-bottom:1px solid var(--line);margin-bottom:20px}
+h1{font-family:var(--f-display);font-weight:700;font-size:clamp(24px,3.2vw,32px);letter-spacing:-.01em;margin:0;text-wrap:balance}
+h1 span{color:var(--accent)}
+.src{font-size:13px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);gap:24px;align-items:start}
+@media (max-width:860px){.grid{grid-template-columns:minmax(0,1fr)}}
+.panel{display:flex;flex-direction:column;gap:14px;min-width:0}
+.label{font-family:var(--f-display);font-weight:600;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.drop{position:relative;border:2px dashed var(--line);border-radius:10px;background:var(--surface);padding:18px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s}
+.drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.drop strong{font-family:var(--f-display);font-size:17px}
+.drop small{color:var(--muted)}
+.drop img{max-height:260px;width:auto;border-radius:6px;border:1px solid var(--line)}
+.drop input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.btn{font:600 14px var(--f-body);border:1px solid var(--accent);background:var(--accent);color:var(--accent-fg);border-radius:8px;padding:10px 16px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--accent)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+.status{font-size:13px;color:var(--muted);min-height:20px}
+.status.err{color:var(--red)}
+.status .spin{display:inline-block;width:10px;height:10px;border:2px solid var(--accent);border-right-color:transparent;border-radius:50%;animation:sp .8s linear infinite;margin-right:6px;vertical-align:-1px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.status .spin{animation:none}}
+textarea{width:100%;min-height:120px;resize:vertical;font:13px/1.55 var(--f-mono);background:var(--paper);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+details.legend{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13px}
+details.legend summary{cursor:pointer;font-weight:600}
+.legend ul{margin:10px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.legend li{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start}
+
+.results{display:flex;flex-direction:column;gap:16px;min-width:0}
+.res-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px}
+.tag-ex{font:600 11px var(--f-display);letter-spacing:.08em;text-transform:uppercase;background:var(--warn-soft);color:var(--warn);border-radius:4px;padding:2px 8px}
+.empty{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:24px;color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:0}
+.card-top{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px 20px;padding:14px 16px;align-items:start}
+@media (max-width:560px){.card-top{grid-template-columns:minmax(0,1fr)}}
+.line-src{font:12px var(--f-mono);color:var(--muted);word-break:break-word}
+.med{font-family:var(--f-display);font-weight:700;font-size:22px;line-height:1.15;margin:2px 0 6px;word-break:break-word}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.chip{font:500 12px var(--f-body);border-radius:999px;padding:2px 10px;background:var(--surface-2);color:var(--fg);border:1px solid var(--line)}
+.chip.match{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+.chip.approx{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+button.chip{cursor:pointer}
+button.chip:hover{border-color:var(--accent)}
+.verdict{border-radius:8px;padding:10px 14px;min-width:220px;max-width:320px}
+.verdict .v1{font:700 18px var(--f-display);display:flex;align-items:center;gap:8px}
+.verdict .v2{font-size:12.5px;margin-top:2px}
+.verdict.sim{background:var(--red-soft);color:var(--red)}
+.verdict.sim.preta{background:var(--black);color:var(--black-fg)}
+.verdict.nao{background:var(--free-soft);color:var(--free)}
+.verdict.ind{background:var(--warn-soft);color:var(--warn)}
+.re-search{display:flex;gap:6px;padding:0 16px 12px;flex-wrap:wrap}
+.re-search input{flex:1 1 200px;min-width:0;font:14px var(--f-body);padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+.re-search .btn{padding:7px 12px;font-size:13px}
+.tbl-wrap{overflow-x:auto;border-top:1px solid var(--line)}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:760px}
+th{font:600 11px var(--f-display);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);text-align:left;padding:8px 12px;background:var(--surface-2);position:sticky;top:0}
+td{padding:8px 12px;border-top:1px solid var(--line);vertical-align:top}
+td.sub{max-width:240px}
+.tarja{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-weight:500}
+.tarja i{display:inline-block;width:22px;height:9px;border-radius:2px;border:1px solid var(--line)}
+.t-ver i{background:var(--red);border-color:var(--red)}
+.t-res i{background:repeating-linear-gradient(90deg,var(--red) 0 5px,var(--surface) 5px 7px);border-color:var(--red)}
+.t-pre i{background:#111;border-color:#111}
+.t-sem i{background:var(--surface)}
+.t-unk i{background:repeating-linear-gradient(45deg,var(--line) 0 3px,var(--surface) 3px 6px)}
+.rx{font-weight:600;white-space:nowrap}
+.rx.s{color:var(--red)} .rx.n{color:var(--free)} .rx.u{color:var(--warn)}
+.more{padding:10px 16px;border-top:1px solid var(--line);font-size:13px}
+.more button{background:none;border:0;color:var(--accent);font:600 13px var(--f-body);cursor:pointer;padding:0}
+.none{padding:12px 16px;border-top:1px solid var(--line);font-size:13.5px;color:var(--muted)}
+footer{margin-top:28px;font-size:12px;color:var(--muted);max-width:75ch}
+[hidden]{display:none!important}
+body{margin:0}
+select,.code input{font:14px var(--f-body);padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg)}
+.opts{display:flex;flex-direction:column;gap:6px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Leitor de Cupom <span>PMC</span></h1>
+    <div class="src" id="srcInfo">Base: Lista PMC (CMED/ANVISA)</div>
+  </header>
+
+  <div class="grid">
+    <section class="panel" aria-label="Entrada do cupom">
+      <div class="label">1 · Captura do cupom</div>
+      <label class="drop" id="drop" tabindex="0">
+        <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif" aria-label="Escolher imagem do cupom">
+        <img id="preview" alt="Captura do cupom" hidden>
+        <strong id="dropTitle">Envie ou arraste a imagem</strong>
+        <small id="dropHint">Foto ou print do cupom fiscal. Também aceita colar com Ctrl+V.</small>
+      </label>
+      <div class="opts">
+        <label for="mode">Leitura da imagem</label>
+        <select id="mode"><option value="ia">Gemini (mais precisa)</option><option value="offline">Leitor offline no navegador (Tesseract)</option></select>
+        <div class="code" id="codeBox" hidden><label for="code">Código de acesso</label><br><input id="code" type="password" autocomplete="off" placeholder="definido no Cloudflare"></div>
+      </div>
+      <div class="row">
+        <button class="btn" id="readBtn" disabled>Ler cupom</button>
+        <button class="btn ghost" id="stopBtn" hidden>Parar</button>
+      </div>
+      <div class="status" id="status" role="status" aria-live="polite"></div>
+
+      <div class="label">2 · Itens lidos (pode editar)</div>
+      <textarea id="text" spellcheck="false" aria-label="Itens do cupom, um por linha" placeholder="Um medicamento por linha. Ex.: DIPIRONA SODICA 500MG 10CP"></textarea>
+      <div class="row"><button class="btn ghost" id="searchBtn">Consultar na lista</button></div>
+
+      <details class="legend">
+        <summary>Como a receita é definida pela tarja</summary>
+        <ul>
+          <li><span class="tarja t-sem"><i></i></span><span><b>Sem Tarja</b> · venda livre, sem receita (MIP).</span></li>
+          <li><span class="tarja t-ver"><i></i></span><span><b>Tarja Vermelha</b> · venda sob prescrição médica; receita simples, sem retenção.</span></li>
+          <li><span class="tarja t-res"><i></i></span><span><b>Vermelha sob restrição</b> · prescrição com retenção da receita (controle especial / antimicrobianos).</span></li>
+          <li><span class="tarja t-pre"><i></i></span><span><b>Tarja Preta</b> · receita de controle especial com Notificação de Receita retida.</span></li>
+          <li><span class="tarja t-unk"><i></i></span><span><b>- (*)</b> · a lista não traz a tarja (dado vindo do Datavisa); confirme na ANVISA.</span></li>
+        </ul>
+      </details>
+    </section>
+
+    <section class="results" aria-label="Resultados">
+      <div class="res-head">
+        <div class="label" id="resLabel">3 · Resultado</div>
+        <span class="tag-ex" id="exTag">Exemplo</span>
+      </div>
+      <div id="results"></div>
+    </section>
+  </div>
+
+  <footer>A leitura da imagem é feita pelo Gemini (API do Google) ou pelo leitor offline, e a classificação vem exclusivamente da Lista PMC (colunas Substância, Produto, Classe Terapêutica, Tipo de Produto e Tarja). Quando o mesmo nome tem tarjas diferentes conforme a apresentação, o resultado mostra a exigência mais restritiva e lista todas as variações.</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script>
+(async () => {
+"use strict";
+try {
+const RAW = await (await fetch("data/pmc.json")).json();
+const D = RAW.dict;
+const ROWS = RAW.rows; // [sub, prod, classe, tipo, tarja]
+const $ = id => document.getElementById(id);
+const norm = s => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toUpperCase().replace(/[^A-Z0-9]+/g," ").trim();
+
+// ---- índices
+const prodIdx = new Map(), subIdx = new Map();
+ROWS.forEach((r,i) => {
+  const pk = norm(D[1][r[1]]); if (pk){ (prodIdx.get(pk)||prodIdx.set(pk,[]).get(pk)).push(i); }
+  const sk = norm(D[0][r[0]]); if (sk){ (subIdx.get(sk)||subIdx.set(sk,[]).get(sk)).push(i); }
+});
+const keys = [...[...prodIdx.keys()].map(k=>({k,t:"produto"})), ...[...subIdx.keys()].map(k=>({k,t:"substância"}))];
+$("srcInfo").textContent = `Base: Lista PMC · ${prodIdx.size.toLocaleString("pt-BR")} produtos · ${subIdx.size.toLocaleString("pt-BR")} substâncias`;
+
+// ---- receita por tarja
+const RX = {
+  "Tarja Preta": {rank:4, cls:"t-pre", rx:"Sim", rxc:"s", det:"Receita de controle especial com Notificação de Receita retida na farmácia."},
+  "Tarja Vermelha sob restrição": {rank:3, cls:"t-res", rx:"Sim", rxc:"s", det:"Receita obrigatória com retenção da receita (controle especial ou antimicrobiano)."},
+  "Tarja Vermelha": {rank:2, cls:"t-ver", rx:"Sim", rxc:"s", det:"Venda sob prescrição médica; receita simples, sem retenção."},
+  "Tarja Sem Tarja": {rank:1, cls:"t-sem", rx:"Não", rxc:"n", det:"Medicamento isento de prescrição (venda livre)."},
+};
+const UNK = {rank:0, cls:"t-unk", rx:"Não informado", rxc:"u", det:"A Lista PMC não informa a tarja deste item (- (*)). Confirme no registro da ANVISA."};
+const rxOf = t => RX[t] || UNK;
+const tarjaLabel = t => t === "Tarja Sem Tarja" ? "Sem Tarja" : (RX[t] ? t : "- (*) não informada");
+
+// ---- limpeza de linha do cupom
+const STOP = new Set("MG MCG G ML L UI CP CPR CPS COMP COMPR CAP CAPS CAPSULA CAPSULAS COMPRIMIDO COMPRIMIDOS DRG DRAGEA DRAGEAS X CX CXA FR FRS FRASCO GTS GOTAS SOL SUSP XPE XAROPE AMP AMPOLA UN UND UNID BL BLISTER C COM REV LIB PROL ORAL INJ TB BG BISN CREME POMADA GEL SPRAY ENV SACHE PO EFERV MASTIG SUB DISP EMS EUROFARMA MEDLEY NEOQUIMICA PRATI DONADUZZI TEUTO GERMED CIMED LEGRAND SANDOZ ACHE BIOLAB EMS SIGMA ATIVUS".split(" "));
+function cleanTokens(s){
+  const toks = norm(s).split(" ").filter(Boolean);
+  const out = [];
+  for (const t of toks){
+    if (/^\d/.test(t) || /^\d*[,.]?\d+(MG|ML|G|MCG|UI|CP|CPR|COMP|CAPS|CAP|DRG|GTS|UN|X)$/.test(t)) { if (out.length) break; else continue; }
+    if (STOP.has(t) && out.length) break;
+    if (STOP.has(t)) continue;
+    out.push(t);
+  }
+  return out;
+}
+function lev(a,b){
+  if (a===b) return 0; const m=a.length,n=b.length; if(!m) return n; if(!n) return m;
+  let prev=new Array(n+1), cur=new Array(n+1);
+  for(let j=0;j<=n;j++) prev[j]=j;
+  for(let i=1;i<=m;i++){cur[0]=i; for(let j=1;j<=n;j++){cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));} [prev,cur]=[cur,prev];}
+  return prev[n];
+}
+const ratio = (a,b) => 1 - lev(a,b)/Math.max(a.length,b.length);
+
+function lookup(query){
+  const toks = cleanTokens(query);
+  if (!toks.length) return null;
+  // 1) maior sequência inicial com correspondência exata — produto, depois substância
+  for (const [idx,type] of [[prodIdx,"produto"],[subIdx,"substância"]]){
+    for (let n=toks.length;n>=1;n--){
+      const k = toks.slice(0,n).join(" ");
+      if (k.length < 3) continue;
+      if (idx.has(k)) return {type, key:k, rows:idx.get(k), exact:true, alts:[]};
+    }
+  }
+  // 2) substância com sal/forma: "AMOXICILINA" -> "AMOXICILINA TRI-HIDRATADA"
+  const q = toks.join(" ");
+  const pref = [...subIdx.keys()].filter(k => k.startsWith(q+" ") && !k.includes(" E ") );
+  if (pref.length && q.length >= 4){
+    const rows = pref.flatMap(k=>subIdx.get(k));
+    return {type:"substância", key:q, rows, exact:true, alts:[], note:`inclui ${pref.length} variação(ões) de sal/forma`};
+  }
+  // 3) abreviação palavra a palavra: "DIPIR SOD" -> "DIPIRONA SODICA"
+  if (toks.length >= 2 && toks.every(t=>t.length>=3)){
+    const hits = keys.filter(({k}) => { const kt=k.split(" "); return kt.length===toks.length && toks.every((t,i)=>kt[i].startsWith(t)); })
+      .sort((a,b)=>(a.t==="produto"?0:1)-(b.t==="produto"?0:1) || a.k.length-b.k.length);
+    if (hits.length){
+      const best = hits[0], idx = best.t==="produto"?prodIdx:subIdx;
+      const alts = [...new Set(hits.slice(1).map(h=>h.k))].filter(k=>k!==best.k).slice(0,4).map(k=>({k}));
+      return {type:best.t, key:best.k, rows:idx.get(best.k), exact:false, alts};
+    }
+  }
+  // 4) aproximado (erro de leitura ou abreviação)
+  const scored = [];
+  for (const {k,t} of keys){
+    if (Math.abs(k.length - q.length) > Math.max(6, q.length*0.6) && !(k.startsWith(q) && q.length>=5)) continue;
+    let s = ratio(q,k);
+    if (q.length >= 5 && k.startsWith(q)) s = Math.max(s, 0.86);
+    const k1 = k.slice(0, q.length); if (q.length>=5) s = Math.max(s, ratio(q,k1)*0.9);
+    if (s >= 0.7) scored.push({k,t,s});
+  }
+  scored.sort((a,b)=>b.s-a.s || a.k.length-b.k.length);
+  const uniq=[]; const seen=new Set();
+  for (const c of scored){ if(!seen.has(c.k)){seen.add(c.k);uniq.push(c);} if(uniq.length>=6) break; }
+  if (!uniq.length || uniq[0].s < 0.78) return {type:null, key:q, rows:[], exact:false, alts:uniq.slice(0,5)};
+  const best = uniq[0];
+  const idx = best.t === "produto" ? prodIdx : subIdx;
+  return {type:best.t, key:best.k, rows:idx.get(best.k), exact:false, alts:uniq.slice(1,5)};
+}
+
+// ---- render
+const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const LIMIT = 12;
+function rowHTML(i){
+  const r = ROWS[i]; const t = D[4][r[4]]; const x = rxOf(t);
+  const sub = D[0][r[0]].split(";").join("; ");
+  return `<tr><td class="sub">${esc(sub)}</td><td><b>${esc(D[1][r[1]])}</b></td><td>${esc(D[2][r[2]]||"—")}</td><td>${esc(D[3][r[3]]||"—")}</td>
+  <td><span class="tarja ${x.cls}"><i></i>${esc(tarjaLabel(t))}</span></td><td><span class="rx ${x.rxc}">${x.rx}</span></td></tr>`;
+}
+function verdictHTML(rows){
+  const tarjas = [...new Set(rows.map(i=>D[4][ROWS[i][4]]))];
+  const known = tarjas.filter(t=>RX[t]);
+  if (!known.length) return `<div class="verdict ind"><div class="v1">Receita: não informada</div><div class="v2">${UNK.det}</div></div>`;
+  const top = known.map(rxOf).sort((a,b)=>b.rank-a.rank)[0];
+  const varied = known.length > 1;
+  const cls = top.rxc==="s" ? ("sim"+(top.cls==="t-pre"?" preta":"")) : "nao";
+  const word = top.rxc==="s" ? "Receita obrigatória" : "Venda sem receita";
+  return `<div class="verdict ${cls}"><div class="v1">${word}</div><div class="v2">${top.det}${varied?" Varia conforme a apresentação; veja a tabela.":""}${tarjas.length>known.length&&!varied?" Algumas apresentações sem tarja informada.":""}</div></div>`;
+}
+function cardHTML(item, n){
+  const m = item.match;
+  const shown = item.showAll ? item.uniq : item.uniq.slice(0,LIMIT);
+  const alts = (m?.alts||[]).map(a=>`<button class="chip" data-alt="${esc(a.k)}" data-card="${n}">${esc(a.k)}</button>`).join("");
+  let chips = "";
+  if (m?.type) chips = `<span class="chip ${m.exact?"match":"approx"}">${m.exact?"Encontrado como":"Aproximado:"} ${m.type}</span>${m.note?`<span class="chip">${esc(m.note)}</span>`:""}`;
+  const body = m?.type
+    ? `<div class="tbl-wrap"><table><thead><tr><th>Substância</th><th>Produto</th><th>Classe terapêutica</th><th>Tipo de produto</th><th>Tarja</th><th>Receita</th></tr></thead><tbody>${shown.map(rowHTML).join("")}</tbody></table></div>
+       ${item.uniq.length>LIMIT?`<div class="more">${item.showAll?"":`Mostrando ${LIMIT} de ${item.uniq.length}. `}<button data-toggle="${n}">${item.showAll?"Mostrar menos":"Mostrar todas"}</button></div>`:""}`
+    : `<div class="none">Nenhum produto ou substância da Lista PMC corresponde a “${esc(item.query)}”. Corrija o nome abaixo${alts?" ou escolha uma sugestão":""}.</div>`;
+  return `<article class="card">
+    <div class="card-top">
+      <div style="min-width:0">
+        ${item.line && item.line!==item.query?`<div class="line-src">cupom: ${esc(item.line)}</div>`:""}
+        <div class="med">${esc(m?.type ? m.key : item.query)}</div>
+        <div class="chips">${chips}${alts?`<span class="src">Outras opções:</span>${alts}`:""}</div>
+      </div>
+      ${m?.type ? verdictHTML(item.uniq) : ""}
+    </div>
+    <form class="re-search" data-form="${n}"><input id="q${n}" value="${esc(item.query)}" aria-label="Corrigir nome pesquisado"><button class="btn ghost" type="submit">Buscar de novo</button></form>
+    ${body}
+  </article>`;
+}
+let items = [];
+function dedupRows(rows){
+  const seen=new Set(), out=[];
+  for (const i of rows){ const r=ROWS[i]; const k=r.join("|"); if(!seen.has(k)){seen.add(k);out.push(i);} }
+  out.sort((a,b)=> rxOf(D[4][ROWS[b][4]]).rank - rxOf(D[4][ROWS[a][4]]).rank || D[1][ROWS[a][1]].localeCompare(D[1][ROWS[b][1]]));
+  return out;
+}
+function makeItem(query, line){
+  const match = lookup(query);
+  return {query, line, match, uniq: match?.rows?.length ? dedupRows(match.rows) : [], showAll:false};
+}
+function render(){
+  const box = $("results");
+  if (!items.length){ box.innerHTML = `<div class="empty">Nenhum medicamento identificado. Envie a captura do cupom ou digite os itens à esquerda.</div>`; return; }
+  box.innerHTML = items.map(cardHTML).join("");
+}
+$("results").addEventListener("click", e => {
+  const t = e.target.closest("[data-toggle]"); if (t){ const it=items[+t.dataset.toggle]; it.showAll=!it.showAll; render(); return; }
+  const a = e.target.closest("[data-alt]"); if (a){ const n=+a.dataset.card; items[n] = makeItem(a.dataset.alt, items[n].line); render(); }
+});
+$("results").addEventListener("submit", e => {
+  const f = e.target.closest("[data-form]"); if(!f) return; e.preventDefault();
+  const n=+f.dataset.form; const v=$("q"+n).value.trim(); if(v){ items[n]=makeItem(v, items[n].line); render(); }
+});
+
+function runText(lines, isExample){
+  items = lines.map(l => typeof l === "string" ? {q:l,line:l} : l).filter(x=>x.q && x.q.trim()).map(x => makeItem(x.q.trim(), x.line));
+  $("exTag").hidden = !isExample;
+  render();
+}
+$("searchBtn").onclick = () => runText($("text").value.split("\n"), false);
+
+// ---- imagem
+let imgFile = null, ctl = null;
+const ACCESS_KEY = "cupom-pmc-codigo";
+function setStatus(msg, err, busy){ $("status").className = "status"+(err?" err":""); $("status").innerHTML = (busy?'<span class="spin"></span>':"")+esc(msg||""); }
+function setImage(f){
+  if (!f || !/^image\//.test(f.type)) { setStatus("Envie uma imagem PNG, JPG, WEBP ou GIF.", true); return; }
+  imgFile = f;
+  const p = $("preview"); p.src = URL.createObjectURL(f); p.hidden = false;
+  $("dropTitle").textContent = "Trocar imagem"; $("dropHint").textContent = f.name || "imagem colada";
+  $("readBtn").disabled = false;
+  readImage();
+}
+$("file").addEventListener("change", e => setImage(e.target.files[0]));
+const drop = $("drop");
+["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => setImage(e.dataTransfer.files[0]));
+drop.addEventListener("keydown", e => { if (e.key==="Enter"||e.key===" "){ e.preventDefault(); $("file").click(); } });
+document.addEventListener("paste", e => {
+  const it = [...(e.clipboardData?.items||[])].find(i=>i.type.startsWith("image/"));
+  if (it){ e.preventDefault(); setImage(it.getAsFile()); }
+});
+
+// Reduz a imagem (lado maior 1600px, JPEG) antes de enviar
+async function toJpeg(file, max=1600){
+  const bmp = await createImageBitmap(file);
+  const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas"); c.width = Math.round(bmp.width*s); c.height = Math.round(bmp.height*s);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return await new Promise(r => c.toBlob(r, "image/jpeg", 0.88));
+}
+const blobToB64 = b => new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result).split(",")[1]); fr.onerror=rej; fr.readAsDataURL(b); });
+
+function getCode(){ try { return localStorage.getItem(ACCESS_KEY) || ""; } catch { return ""; } }
+function saveCode(v){ try { localStorage.setItem(ACCESS_KEY, v); } catch {} }
+$("code").value = getCode();
+$("code").addEventListener("change", e => saveCode(e.target.value.trim()));
+
+// 1) Gemini via Cloudflare Pages Function
+async function readWithAI(jpeg, signal){
+  const r = await fetch("/api/ler-cupom", {
+    method:"POST", signal,
+    headers:{ "content-type":"application/json", "x-codigo-acesso": $("code").value.trim() },
+    body: JSON.stringify({ image: await blobToB64(jpeg), mediaType: "image/jpeg" }),
+  });
+  if (r.status === 401) { $("codeBox").hidden = false; const e = new Error("Código de acesso inválido."); e.code = "auth"; throw e; }
+  if (r.status === 404 || r.status === 405) { const e = new Error("Função não publicada"); e.code = "nofn"; throw e; }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(data.erro || ("Erro " + r.status)); e.code = data.codigo || "api"; throw e; }
+  return (Array.isArray(data.itens) ? data.itens : []).map(o => ({q:String(o?.nome||o?.linha||"").trim(), line:String(o?.linha||"").trim()})).filter(o=>o.q);
+}
+
+// 2) Alternativa: OCR no navegador com Tesseract.js
+let tessWorker = null;
+async function readWithTesseract(jpeg){
+  if (!window.Tesseract) throw new Error("Tesseract.js não carregou.");
+  if (!tessWorker){
+    setStatus("Carregando leitor offline (só na primeira vez)…", false, true);
+    tessWorker = await Tesseract.createWorker("por");
+  }
+  setStatus("Lendo o cupom no navegador…", false, true);
+  const { data } = await tessWorker.recognize(jpeg);
+  const lines = data.text.split("\n").map(s=>s.trim()).filter(s => /[A-Za-zÀ-ú]{4,}/.test(s));
+  const out = [];
+  for (const l of lines){
+    const m = lookup(l);
+    if (m?.type) out.push({q: m.key, line: l});
+  }
+  const seen = new Set();
+  return out.filter(o => !seen.has(o.q) && seen.add(o.q));
+}
+
+async function readImage(){
+  if (!imgFile) return;
+  ctl?.abort(); ctl = new AbortController();
+  const signal = ctl.signal;
+  $("readBtn").disabled = true; $("stopBtn").hidden = false;
+  const mode = $("mode").value;
+  try {
+    setStatus("Preparando a imagem…", false, true);
+    const jpeg = await toJpeg(imgFile);
+    let list, via;
+    if (mode === "ia") {
+      setStatus("Lendo o cupom com o Gemini…", false, true);
+      try { list = await readWithAI(jpeg, signal); via = "Gemini"; }
+      catch (e) {
+        if (e.name === "AbortError" || e.code === "auth") throw e;
+        setStatus("Leitura com o Gemini indisponível (" + e.message + "). Usando o leitor offline…", true, true);
+        list = await readWithTesseract(jpeg); via = "leitor offline";
+      }
+    } else {
+      list = await readWithTesseract(jpeg); via = "leitor offline";
+    }
+    if (signal.aborted) return;
+    $("text").value = list.map(o=>o.q).join("\n");
+    runText(list, false);
+    setStatus(list.length ? `${list.length} item(ns) lido(s) pelo ${via}. Ajuste os nomes no campo 2 se precisar.` : "Nenhum medicamento encontrado na imagem. Digite os itens no campo 2.", !list.length);
+  } catch(e){
+    if (e.name === "AbortError") setStatus("Leitura interrompida.");
+    else setStatus(e.message || "Falha na leitura. Tente de novo.", true);
+  } finally {
+    $("readBtn").disabled = !imgFile; $("stopBtn").hidden = true;
+  }
+}
+$("readBtn").onclick = readImage;
+$("stopBtn").onclick = () => ctl?.abort();
+
+// ---- estado inicial: exemplo
+const EX = ["NEOSALDINA", "AMOXICILINA", "RIVOTRIL", "DIPIRONA SODICA"];
+$("text").value = EX.join("\n");
+runText(EX, true);
+} catch (err) {
+  document.getElementById("results").innerHTML = '<div class="empty">Não foi possível carregar a Lista PMC (data/pmc.json). Verifique se o arquivo foi publicado junto com o index.html.</div>';
+  console.error(err);
+}
+})();
+</script>
+</body>
+</html>
